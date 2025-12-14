@@ -1,6 +1,10 @@
 const express = require("express");
 const cors = require("cors");
 const crypto = require("crypto");
+const db = require("./database");
+const multer = require("multer");
+const csv = require("csv-parser");
+const fs = require("fs");
 
 const app = express();
 
@@ -69,6 +73,65 @@ app.post("/reset-passcode", (req, res) => {
   TOKEN_EXPIRY = null;
 
   return res.json({ success: true, message: "Passcode reset successful" });
+});
+// ================= FILE UPLOAD CONFIG =================
+const upload = multer({ dest: "uploads/" });
+
+// ================= ADD MANUAL LEAD =================
+app.post("/add-lead", (req, res) => {
+  const lead = req.body;
+
+  const query = `
+    INSERT INTO leads 
+    (full_name, phone, email, budget, location, property_type, purpose, temperature, assigned_client, source, status, created_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+  `;
+
+  db.run(query, [
+    lead.full_name,
+    lead.phone,
+    lead.email,
+    lead.budget,
+    lead.location,
+    lead.property_type,
+    lead.purpose,
+    lead.temperature,
+    lead.assigned_client,
+    lead.source,
+    "PENDING",
+    new Date().toISOString()
+  ], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true, message: "Lead added successfully" });
+  });
+});
+
+// ================= GET PENDING LEADS =================
+app.get("/pending-leads", (req, res) => {
+  db.all("SELECT * FROM leads WHERE status='PENDING'", [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// ================= APPROVE LEADS =================
+app.post("/approve-leads", (req, res) => {
+  const { ids } = req.body;
+
+  if (!ids || !ids.length) {
+    return res.status(400).json({ error: "No leads selected" });
+  }
+
+  const placeholders = ids.map(() => "?").join(",");
+
+  db.run(
+    `UPDATE leads SET status='APPROVED' WHERE id IN (${placeholders})`,
+    ids,
+    function(err) {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, message: "Leads approved successfully" });
+    }
+  );
 });
 
 // ================= START SERVER =================
