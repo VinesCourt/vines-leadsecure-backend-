@@ -1,115 +1,78 @@
-require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-const fs = require("fs");
-const { v4: uuidv4 } = require("uuid");
-const nodemailer = require("nodemailer");
+const crypto = require("crypto");
 
 const app = express();
+
+// IMPORTANT MIDDLEWARE
 app.use(cors());
 app.use(express.json());
 
-const DATA_FILE = "./data.json";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL;
+// ================= STORAGE =================
+let ADMIN_PASSCODE = "vinesadmin";
+let RESET_TOKEN = null;
+let TOKEN_EXPIRY = null;
 
-// Ensure data file exists
-if (!fs.existsSync(DATA_FILE)) {
-  fs.writeFileSync(
-    DATA_FILE,
-    JSON.stringify({ adminPasscode: "vinesadmin", resetToken: null })
-  );
-}
-
-// Read data
-function readData() {
-  return JSON.parse(fs.readFileSync(DATA_FILE));
-}
-
-// Write data
-function writeData(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
-
-// Email transporter (Gmail App Password later)
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-  },
-});
-
-// Health check
+// ================= TEST ENDPOINT =================
 app.get("/", (req, res) => {
-  res.send("Vines LeadSecure Backend is running");
+  res.status(200).send("Vines LeadSecure Backend Running");
 });
 
-// Validate admin passcode
-app.post("/validate-passcode", (req, res) => {
-  const { passcode } = req.body;
-  const data = readData();
-  res.json({ valid: passcode === data.adminPasscode });
-});
-
-// Change admin passcode
-app.post("/change-passcode", async (req, res) => {
+// ================= CHANGE PASSCODE =================
+app.post("/change-passcode", (req, res) => {
   const { oldPasscode, newPasscode } = req.body;
-  const data = readData();
 
-  if (oldPasscode !== data.adminPasscode) {
+  if (!oldPasscode || !newPasscode) {
+    return res.status(400).json({ error: "Missing passcode fields" });
+  }
+
+  if (oldPasscode !== ADMIN_PASSCODE) {
     return res.status(401).json({ error: "Invalid current passcode" });
   }
 
-  data.adminPasscode = newPasscode;
-  writeData(data);
-
-  if (process.env.SMTP_PASS) {
-    await transporter.sendMail({
-      to: ADMIN_EMAIL,
-      subject: "Vines LeadSecure – Passcode Changed",
-      text: "Your admin passcode has been changed successfully.",
-    });
-  }
-
-  res.json({ success: true });
+  ADMIN_PASSCODE = newPasscode;
+  return res.json({ success: true, message: "Passcode changed successfully" });
 });
 
-// Request passcode reset
-app.post("/request-reset", async (req, res) => {
-  const token = uuidv4();
-  const data = readData();
-  data.resetToken = token;
-  writeData(data);
+// ================= GENERATE RESET TOKEN =================
+app.post("/request-recovery", (req, res) => {
+  RESET_TOKEN = crypto.randomBytes(20).toString("hex");
+  TOKEN_EXPIRY = Date.now() + 15 * 60 * 1000;
 
-  if (process.env.SMTP_PASS) {
-    await transporter.sendMail({
-      to: ADMIN_EMAIL,
-      subject: "Vines LeadSecure – Passcode Reset",
-      text: `Use this token to reset your passcode: ${token}`,
-    });
-  }
+  console.log("RESET TOKEN:", RESET_TOKEN);
 
-  res.json({ success: true });
+  return res.json({
+    success: true,
+    token: RESET_TOKEN,
+    expires: "15 minutes"
+  });
 });
 
-// Reset passcode
+// ================= RESET PASSCODE =================
 app.post("/reset-passcode", (req, res) => {
   const { token, newPasscode } = req.body;
-  const data = readData();
 
-  if (token !== data.resetToken) {
-    return res.status(401).json({ error: "Invalid reset token" });
+  if (!token || !newPasscode) {
+    return res.status(400).json({ error: "Missing token or new passcode" });
   }
 
-  data.adminPasscode = newPasscode;
-  data.resetToken = null;
-  writeData(data);
+  if (!RESET_TOKEN || Date.now() > TOKEN_EXPIRY) {
+    return res.status(400).json({ error: "Token expired" });
+  }
 
-  res.json({ success: true });
+  if (token !== RESET_TOKEN) {
+    return res.status(401).json({ error: "Invalid token" });
+  }
+
+  ADMIN_PASSCODE = newPasscode;
+  RESET_TOKEN = null;
+  TOKEN_EXPIRY = null;
+
+  return res.json({ success: true, message: "Passcode reset successful" });
 });
 
-// START SERVER (Render-safe)
-const PORT = process.env.PORT || 3000;
+// ================= START SERVER =================
+const PORT = process.env.PORT || 1000;
 app.listen(PORT, () => {
-  console.log(`Vines LeadSecure backend running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
