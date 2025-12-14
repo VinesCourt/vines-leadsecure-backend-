@@ -1,27 +1,31 @@
 const express = require("express");
 const cors = require("cors");
-const crypto = require("crypto");
 const multer = require("multer");
-const csv = require("csv-parser");
-const fs = require("fs");
+const crypto = require("crypto");
 
 const app = express();
 
-// IMPORTANT MIDDLEWARE
+/* ================= MIDDLEWARE ================= */
 app.use(cors());
 app.use(express.json());
 
-// ================= STORAGE =================
+/* ================= IN-MEMORY STORAGE ================= */
 let ADMIN_PASSCODE = "vinesadmin";
 let RESET_TOKEN = null;
 let TOKEN_EXPIRY = null;
 
-// ================= TEST ENDPOINT =================
+/* ================= FILE UPLOAD SETUP ================= */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 5 * 1024 * 1024 }
+});
+
+/* ================= HEALTH CHECK ================= */
 app.get("/", (req, res) => {
   res.status(200).send("Vines LeadSecure Backend Running");
 });
 
-// ================= CHANGE PASSCODE =================
+/* ================= CHANGE PASSCODE ================= */
 app.post("/change-passcode", (req, res) => {
   const { oldPasscode, newPasscode } = req.body;
 
@@ -37,12 +41,10 @@ app.post("/change-passcode", (req, res) => {
   return res.json({ success: true, message: "Passcode changed successfully" });
 });
 
-// ================= GENERATE RESET TOKEN =================
+/* ================= GENERATE RESET TOKEN ================= */
 app.post("/request-recovery", (req, res) => {
   RESET_TOKEN = crypto.randomBytes(20).toString("hex");
   TOKEN_EXPIRY = Date.now() + 15 * 60 * 1000;
-
-  console.log("RESET TOKEN:", RESET_TOKEN);
 
   return res.json({
     success: true,
@@ -51,7 +53,7 @@ app.post("/request-recovery", (req, res) => {
   });
 });
 
-// ================= RESET PASSCODE =================
+/* ================= RESET PASSCODE ================= */
 app.post("/reset-passcode", (req, res) => {
   const { token, newPasscode } = req.body;
 
@@ -73,36 +75,22 @@ app.post("/reset-passcode", (req, res) => {
 
   return res.json({ success: true, message: "Passcode reset successful" });
 });
-// ================= FILE UPLOAD CONFIG =================
-const upload = multer({ dest: "uploads/" });
 
-// ================= ADD MANUAL LEAD =================
-app.post("/add-lead", (req, res) => {
-  const lead = req.body;
-
-  const query = `
-    INSERT INTO leads 
-    (full_name, phone, email, budget, location, property_type, purpose, temperature, assigned_client, source, status, created_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-  `;
-});
-
-// ================= GET PENDING LEADS =================
-app.get("/pending-leads", (req, res) => {
-});
-
-// ================= APPROVE LEADS =================
-app.post("/approve-leads", (req, res) => {
-  const { ids } = req.body;
-
-  if (!ids || !ids.length) {
-    return res.status(400).json({ error: "No leads selected" });
+/* ================= CSV UPLOAD ENDPOINT ================= */
+app.post("/upload-csv", upload.single("file"), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: "No file uploaded" });
   }
 
-  const placeholders = ids.map(() => "?").join(",");
+  return res.json({
+    success: true,
+    message: "CSV received successfully",
+    fileName: req.file.originalname,
+    size: req.file.size
+  });
 });
 
-// ================= START SERVER =================
+/* ================= START SERVER ================= */
 const PORT = process.env.PORT || 1000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
