@@ -2,12 +2,23 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
+
 
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
 app.use(cors());
 app.use(express.json());
+
+/* ================= DATABASE CONNECTION ================= */
+const MONGODB_URI = process.env.MONGODB_URI;
+
+mongoose
+  .connect(MONGODB_URI)
+  .then(() => console.log("✅ MongoDB connected successfully"))
+  .catch(err => console.error("❌ MongoDB connection error:", err));
+
 
 /* ================= IN-MEMORY STORAGE ================= */
 let ADMIN_PASSCODE = "vinesadmin";
