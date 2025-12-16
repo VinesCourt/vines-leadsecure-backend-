@@ -4,26 +4,58 @@ const multer = require("multer");
 const crypto = require("crypto");
 const mongoose = require("mongoose");
 
-
 const app = express();
 
 /* ================= MIDDLEWARE ================= */
 app.use(cors());
 app.use(express.json());
 
-/* ================= DATABASE CONNECTION ================= */
-const MONGODB_URI = process.env.MONGODB_URI;
-
+/* ================= MONGODB CONNECTION ================= */
 mongoose
-  .connect(MONGODB_URI)
+  .connect(process.env.MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+  })
   .then(() => console.log("✅ MongoDB connected successfully"))
-  .catch(err => console.error("❌ MongoDB connection error:", err));
+  .catch(err => {
+    console.error("❌ MongoDB connection error:", err.message);
+    process.exit(1);
+  });
 
+/* ================= SCHEMAS ================= */
+const AdminSchema = new mongoose.Schema({
+  passcode: { type: String, required: true }
+});
 
-/* ================= IN-MEMORY STORAGE ================= */
-let ADMIN_PASSCODE = "vinesadmin";
-let RESET_TOKEN = null;
-let TOKEN_EXPIRY = null;
+const TokenSchema = new mongoose.Schema({
+  token: String,
+  expiresAt: Date
+});
+
+const LeadSchema = new mongoose.Schema(
+  {
+    name: String,
+    email: String,
+    phone: String,
+    source: String
+  },
+  { timestamps: true }
+);
+
+/* ================= MODELS ================= */
+const Admin = mongoose.model("Admin", AdminSchema);
+const ResetToken = mongoose.model("ResetToken", TokenSchema);
+const Lead = mongoose.model("Lead", LeadSchema);
+
+/* ================= INIT ADMIN ================= */
+async function initAdmin() {
+  const admin = await Admin.findOne();
+  if (!admin) {
+    await Admin.create({ passcode: "vinesadmin" });
+    console.log("🔐 Default admin passcode created");
+  }
+}
+initAdmin();
 
 /* ================= FILE UPLOAD SETUP ================= */
 const upload = multer({
@@ -37,63 +69,68 @@ app.get("/", (req, res) => {
 });
 
 /* ================= CHANGE PASSCODE ================= */
-app.post("/change-passcode", (req, res) => {
+app.post("/change-passcode", async (req, res) => {
   const { oldPasscode, newPasscode } = req.body;
 
   if (!oldPasscode || !newPasscode) {
     return res.status(400).json({ error: "Missing passcode fields" });
   }
 
-  if (oldPasscode !== ADMIN_PASSCODE) {
+  const admin = await Admin.findOne();
+  if (!admin || admin.passcode !== oldPasscode) {
     return res.status(401).json({ error: "Invalid current passcode" });
   }
 
-  ADMIN_PASSCODE = newPasscode;
-  return res.json({ success: true, message: "Passcode changed successfully" });
+  admin.passcode = newPasscode;
+  await admin.save();
+
+  res.json({ success: true, message: "Passcode changed successfully" });
 });
 
-/* ================= GENERATE RESET TOKEN ================= */
-app.post("/request-recovery", (req, res) => {
-  RESET_TOKEN = crypto.randomBytes(20).toString("hex");
-  TOKEN_EXPIRY = Date.now() + 15 * 60 * 1000;
+/* ================= REQUEST RESET TOKEN ================= */
+app.post("/request-recovery", async (req, res) => {
+  const token = crypto.randomBytes(20).toString("hex");
+  const expiresAt = Date.now() + 15 * 60 * 1000;
 
-  return res.json({
+  await ResetToken.deleteMany({});
+  await ResetToken.create({ token, expiresAt });
+
+  res.json({
     success: true,
-    token: RESET_TOKEN,
+    token,
     expires: "15 minutes"
   });
 });
 
 /* ================= RESET PASSCODE ================= */
-app.post("/reset-passcode", (req, res) => {
+app.post("/reset-passcode", async (req, res) => {
   const { token, newPasscode } = req.body;
 
   if (!token || !newPasscode) {
     return res.status(400).json({ error: "Missing token or new passcode" });
   }
 
-  if (!RESET_TOKEN || Date.now() > TOKEN_EXPIRY) {
-    return res.status(400).json({ error: "Token expired" });
+  const record = await ResetToken.findOne({ token });
+  if (!record || Date.now() > record.expiresAt) {
+    return res.status(400).json({ error: "Invalid or expired token" });
   }
 
-  if (token !== RESET_TOKEN) {
-    return res.status(401).json({ error: "Invalid token" });
-  }
+  const admin = await Admin.findOne();
+  admin.passcode = newPasscode;
+  await admin.save();
 
-  ADMIN_PASSCODE = newPasscode;
-  RESET_TOKEN = null;
-  TOKEN_EXPIRY = null;
+  await ResetToken.deleteMany({});
 
-  return res.json({ success: true, message: "Passcode reset successful" });
+  res.json({ success: true, message: "Passcode reset successful" });
 });
 
-/* ================= CSV UPLOAD ENDPOINT ================= */
-app.post("/upload-csv", upload.single("file"), (req, res) => {
+/* ================= CSV UPLOAD ================= */
+app.post("/upload-csv", upload.single("file"), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
-  return res.json({
+  res.json({
     success: true,
     message: "CSV received successfully",
     fileName: req.file.originalname,
@@ -101,8 +138,20 @@ app.post("/upload-csv", upload.single("file"), (req, res) => {
   });
 });
 
+/* ================= MANUAL LEAD ENTRY ================= */
+app.post("/leads", async (req, res) => {
+  const lead = await Lead.create(req.body);
+  res.json({ success: true, lead });
+});
+
+/* ================= GET ALL LEADS ================= */
+app.get("/leads", async (req, res) => {
+  const leads = await Lead.find().sort({ createdAt: -1 });
+  res.json(leads);
+});
+
 /* ================= START SERVER ================= */
 const PORT = process.env.PORT || 1000;
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
