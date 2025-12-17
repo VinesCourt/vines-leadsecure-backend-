@@ -2,7 +2,8 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const crypto = require("crypto");
-const mongoose = require("mongoose");
+const fs = require("fs");
+const path = require("path");
 
 const app = express();
 
@@ -10,39 +11,25 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* ================= MONGODB CONNECTION ================= */
-const MONGODB_URI = process.env.MONGODB_URI;
+/* ================= DATA FILES ================= */
+const dataDir = path.join(__dirname, "data");
+if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
-mongoose
-  .connect(MONGODB_URI)
-  .then(() => {
-    console.log("✅ MongoDB connected successfully");
-  })
-  .catch((err) => {
-    console.error("❌ MongoDB connection error:", err.message);
-    process.exit(1);
-  });
+const adminFile = path.join(dataDir, "admin.json");
+const tokenFile = path.join(dataDir, "tokens.json");
+const leadsFile = path.join(dataDir, "leads.json");
 
-/* ================= SCHEMA ================= */
-const AdminSchema = new mongoose.Schema({
-  passcode: { type: String, required: true },
-  resetToken: String,
-  tokenExpiry: Date
-});
+const readJSON = (file, fallback) =>
+  fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : fallback;
 
-const Admin = mongoose.model("Admin", AdminSchema);
+const writeJSON = (file, data) =>
+  fs.writeFileSync(file, JSON.stringify(data, null, 2));
 
-/* ================= INIT ADMIN ================= */
-async function initAdmin() {
-  const existing = await Admin.findOne();
-  if (!existing) {
-    await Admin.create({ passcode: "vinesadmin" });
-    console.log("🔐 Default admin passcode created");
-  }
+if (!fs.existsSync(adminFile)) {
+  writeJSON(adminFile, { passcode: "vinesadmin" });
 }
-initAdmin();
 
-/* ================= FILE UPLOAD SETUP ================= */
+/* ================= FILE UPLOAD ================= */
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 }
@@ -50,32 +37,30 @@ const upload = multer({
 
 /* ================= HEALTH CHECK ================= */
 app.get("/", (req, res) => {
-  res.send("Vines LeadSecure Backend Running");
+  res.send("✅ Vines LeadSecure Backend (No-DB Mode)");
 });
 
 /* ================= CHANGE PASSCODE ================= */
-app.post("/change-passcode", async (req, res) => {
+app.post("/change-passcode", (req, res) => {
   const { oldPasscode, newPasscode } = req.body;
+  const admin = readJSON(adminFile, {});
 
-  const admin = await Admin.findOne();
-  if (!admin || admin.passcode !== oldPasscode) {
+  if (oldPasscode !== admin.passcode) {
     return res.status(401).json({ error: "Invalid current passcode" });
   }
 
   admin.passcode = newPasscode;
-  await admin.save();
+  writeJSON(adminFile, admin);
 
-  res.json({ success: true, message: "Passcode changed successfully" });
+  res.json({ success: true, message: "Passcode updated" });
 });
 
-/* ================= GENERATE RESET TOKEN ================= */
-app.post("/request-recovery", async (req, res) => {
+/* ================= GENERATE TOKEN ================= */
+app.post("/request-recovery", (req, res) => {
   const token = crypto.randomBytes(20).toString("hex");
+  const expiry = Date.now() + 15 * 60 * 1000;
 
-  const admin = await Admin.findOne();
-  admin.resetToken = token;
-  admin.tokenExpiry = Date.now() + 15 * 60 * 1000;
-  await admin.save();
+  writeJSON(tokenFile, { token, expiry });
 
   res.json({
     success: true,
@@ -85,22 +70,18 @@ app.post("/request-recovery", async (req, res) => {
 });
 
 /* ================= RESET PASSCODE ================= */
-app.post("/reset-passcode", async (req, res) => {
+app.post("/reset-passcode", (req, res) => {
   const { token, newPasscode } = req.body;
+  const stored = readJSON(tokenFile, null);
+  const admin = readJSON(adminFile, {});
 
-  const admin = await Admin.findOne();
-  if (
-    !admin ||
-    admin.resetToken !== token ||
-    Date.now() > admin.tokenExpiry
-  ) {
+  if (!stored || token !== stored.token || Date.now() > stored.expiry) {
     return res.status(400).json({ error: "Invalid or expired token" });
   }
 
   admin.passcode = newPasscode;
-  admin.resetToken = null;
-  admin.tokenExpiry = null;
-  await admin.save();
+  writeJSON(adminFile, admin);
+  fs.unlinkSync(tokenFile);
 
   res.json({ success: true, message: "Passcode reset successful" });
 });
@@ -111,16 +92,23 @@ app.post("/upload-csv", upload.single("file"), (req, res) => {
     return res.status(400).json({ error: "No file uploaded" });
   }
 
+  const existing = readJSON(leadsFile, []);
+  existing.push({
+    filename: req.file.originalname,
+    size: req.file.size,
+    uploadedAt: new Date().toISOString()
+  });
+
+  writeJSON(leadsFile, existing);
+
   res.json({
     success: true,
-    message: "CSV received successfully",
-    fileName: req.file.originalname,
-    size: req.file.size
+    message: "CSV uploaded successfully"
   });
 });
 
 /* ================= START SERVER ================= */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🚀 Server running on port ${PORT} (No-DB Mode)`);
 });
