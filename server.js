@@ -107,6 +107,35 @@ app.post("/upload-csv", upload.single("file"), (req, res) => {
   });
 });
 
+/* ================= LEAD CAPTURE (GOOGLE SHEETS) ================= */
+app.post("/api/leads", async (req, res) => {
+  try {
+    const { fullName, phone, email, source } = req.body;
+
+    if (!fullName || !phone) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    await fetch("https://script.google.com/macros/s/AKfycbwCONkKLBeYVHfxtnlWXQtMFpLAwU9Te3bMBr_dgFMYwlFeoUOoPM5EHrlvO7KWHF9U/exec", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fullName,
+        phone,
+        email: email || "",
+        source: source || "Website",
+        createdAt: new Date().toISOString()
+      })
+    });
+
+    res.json({ success: true, message: "Lead captured successfully" });
+
+  } catch (error) {
+    console.error("Google Sheets Error:", error);
+    res.status(500).json({ success: false, error: "Lead capture failed" });
+  }
+});
+
 /* ================= START SERVER ================= */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
