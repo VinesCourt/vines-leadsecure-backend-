@@ -117,17 +117,26 @@ app.post("/api/leads", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    await fetch("https://script.google.com/macros/s/AKfycbwVBTl4uWMtr-vCekpv1fmESeUb7L3j3UBP9NqyYEanpIZl_GcFgOASCI01qv9ZJbg/exec", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fullName,
-        phone,
-        email: email || "",
-        source: source || "Website",
-        createdAt: new Date().toISOString()
-      })
-    });
+    const response = await fetch(
+      "https://script.google.com/macros/s/AKfycbwVBTl4uWMtr-vCekpv1fmESeUb7L3j3UBP9NqyYEanpIZl_GcFgOASCI01qv9ZJbg/exec",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          fullName,
+          phone,
+          email: email || "",
+          source: source || "Website"
+        })
+      }
+    );
+
+    const result = await response.text();
+
+    if (!response.ok) {
+      console.error("Google Script failed:", result);
+      return res.status(500).json({ success: false, error: "Google Sheets rejected request" });
+    }
 
     res.json({ success: true, message: "Lead captured successfully" });
 
