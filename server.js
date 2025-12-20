@@ -118,7 +118,7 @@ app.post("/api/leads", async (req, res) => {
     }
 
     const response = await fetch(
-      "https://script.google.com/macros/s/AKfycbwVBTl4uWMtr-vCekpv1fmESeUb7L3j3UBP9NqyYEanpIZl_GcFgOASCI01qv9ZJbg/exec",
+      "https://script.google.com/macros/s/AKfycbwI9HTVsEVX4xNtwIckjHgNZf5Yv1QjZh4045XDvYKiiuozCJCN21sgUZaNgDyQxHym/exec",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
