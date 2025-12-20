@@ -1,11 +1,10 @@
+const fetch = require("node-fetch");
 const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
-const fetch = (...args) =>
-  import("node-fetch").then(({ default: fetch }) => fetch(...args));
 
 const app = express();
 
