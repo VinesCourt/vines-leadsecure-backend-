@@ -146,6 +146,26 @@ app.post("/api/leads", async (req, res) => {
   }
 });
 
+/* ================= VIEW LEADS ================= */
+app.get("/api/leads-view", (req, res) => {
+  const leads = readJSON(leadsFile, []);
+  res.json(leads);
+});
+
+/* ================= EXPORT CSV ================= */
+app.get("/api/leads-csv", (req, res) => {
+  const leads = readJSON(leadsFile, []);
+  let csv = "Date,Name,Phone,Email,Source\n";
+
+  leads.forEach(l => {
+    csv += `${l.date || ""},${l.fullName},${l.phone},${l.email},${l.source}\n`;
+  });
+
+  res.header("Content-Type", "text/csv");
+  res.attachment("leads.csv");
+  res.send(csv);
+});
+
 /* ================= START SERVER ================= */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
