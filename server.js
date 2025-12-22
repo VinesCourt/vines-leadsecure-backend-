@@ -36,79 +36,16 @@ const upload = multer({
   limits: { fileSize: 5 * 1024 * 1024 }
 });
 
+/* ================= GOOGLE SCRIPT URL ================= */
+const GOOGLE_SCRIPT_URL =
+  "https://script.google.com/macros/s/AKfycbwI9HTVsEVX4xNtwIckjHgNZf5Yv1QjZh4045XDvYKiiuozCJCN21sgUZaNgDyQxHym/exec";
+
 /* ================= HEALTH CHECK ================= */
 app.get("/", (req, res) => {
-  res.send("✅ Vines LeadSecure Backend (No-DB Mode)");
+  res.send("✅ Vines LeadSecure Backend is LIVE");
 });
 
-/* ================= CHANGE PASSCODE ================= */
-app.post("/change-passcode", (req, res) => {
-  const { oldPasscode, newPasscode } = req.body;
-  const admin = readJSON(adminFile, {});
-
-  if (oldPasscode !== admin.passcode) {
-    return res.status(401).json({ error: "Invalid current passcode" });
-  }
-
-  admin.passcode = newPasscode;
-  writeJSON(adminFile, admin);
-
-  res.json({ success: true, message: "Passcode updated" });
-});
-
-/* ================= GENERATE TOKEN ================= */
-app.post("/request-recovery", (req, res) => {
-  const token = crypto.randomBytes(20).toString("hex");
-  const expiry = Date.now() + 15 * 60 * 1000;
-
-  writeJSON(tokenFile, { token, expiry });
-
-  res.json({
-    success: true,
-    token,
-    expires: "15 minutes"
-  });
-});
-
-/* ================= RESET PASSCODE ================= */
-app.post("/reset-passcode", (req, res) => {
-  const { token, newPasscode } = req.body;
-  const stored = readJSON(tokenFile, null);
-  const admin = readJSON(adminFile, {});
-
-  if (!stored || token !== stored.token || Date.now() > stored.expiry) {
-    return res.status(400).json({ error: "Invalid or expired token" });
-  }
-
-  admin.passcode = newPasscode;
-  writeJSON(adminFile, admin);
-  fs.unlinkSync(tokenFile);
-
-  res.json({ success: true, message: "Passcode reset successful" });
-});
-
-/* ================= CSV UPLOAD ================= */
-app.post("/upload-csv", upload.single("file"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: "No file uploaded" });
-  }
-
-  const existing = readJSON(leadsFile, []);
-  existing.push({
-    filename: req.file.originalname,
-    size: req.file.size,
-    uploadedAt: new Date().toISOString()
-  });
-
-  writeJSON(leadsFile, existing);
-
-  res.json({
-    success: true,
-    message: "CSV uploaded successfully"
-  });
-});
-
-/* ================= LEAD CAPTURE (GOOGLE SHEETS) ================= */
+/* ================= LEAD CAPTURE ================= */
 app.post("/api/leads", async (req, res) => {
   try {
     const { fullName, phone, email, source } = req.body;
@@ -117,57 +54,62 @@ app.post("/api/leads", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const response = await fetch(
-      "https://script.google.com/macros/s/AKfycbwI9HTVsEVX4xNtwIckjHgNZf5Yv1QjZh4045XDvYKiiuozCJCN21sgUZaNgDyQxHym/exec",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fullName,
-          phone,
-          email: email || "",
-          source: source || "Website"
-        })
-      }
-    );
-
-    const result = await response.text();
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        fullName,
+        phone,
+        email: email || "",
+        source: source || "Website"
+      })
+    });
 
     if (!response.ok) {
-      console.error("Google Script failed:", result);
-      return res.status(500).json({ success: false, error: "Google Sheets rejected request" });
+      return res
+        .status(500)
+        .json({ success: false, error: "Google Sheets rejected request" });
     }
 
     res.json({ success: true, message: "Lead captured successfully" });
-
-  } catch (error) {
-    console.error("Google Sheets Error:", error);
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ success: false, error: "Lead capture failed" });
   }
 });
 
-/* ================= VIEW LEADS ================= */
-app.get("/api/leads-view", (req, res) => {
-  const leads = readJSON(leadsFile, []);
-  res.json(leads);
+/* ================= GET ALL LEADS (STEP 2) ================= */
+app.get("/api/leads/all", async (req, res) => {
+  try {
+    const response = await fetch(GOOGLE_SCRIPT_URL);
+    const data = await response.json();
+    res.json(data);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to load leads" });
+  }
 });
 
-/* ================= EXPORT CSV ================= */
-app.get("/api/leads-csv", (req, res) => {
-  const leads = readJSON(leadsFile, []);
-  let csv = "Date,Name,Phone,Email,Source\n";
+/* ================= TOGGLE APPROVAL (STEP 3) ================= */
+app.post("/api/leads/toggle", async (req, res) => {
+  try {
+    const { row } = req.body;
 
-  leads.forEach(l => {
-    csv += `${l.date || ""},${l.fullName},${l.phone},${l.email},${l.source}\n`;
-  });
+    await fetch(GOOGLE_SCRIPT_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "toggle", row })
+    });
 
-  res.header("Content-Type", "text/csv");
-  res.attachment("leads.csv");
-  res.send(csv);
+    res.json({ success: true });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Toggle failed" });
+  }
 });
 
 /* ================= START SERVER ================= */
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT} (No-DB Mode)`);
+  console.log(`🚀 Server running on port ${PORT}`);
 });
