@@ -54,7 +54,7 @@ app.post("/api/leads", async (req, res) => {
       return res.status(400).json({ error: "Missing required fields" });
     }
 
-    const response = await fetch(https://script.google.com/macros/s/AKfycbwI9HTVsEVX4xNtwIckjHgNZf5Yv1QjZh4045XDvYKiiuozCJCN21sgUZaNgDyQxHym/exec, {
+    const response = await fetch(GOOGLE_SCRIPT_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
