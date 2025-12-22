@@ -1,115 +1,134 @@
-const fetch = require("node-fetch");
 const express = require("express");
 const cors = require("cors");
-const multer = require("multer");
-const crypto = require("crypto");
+const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
 
 const app = express();
-
-/* ================= MIDDLEWARE ================= */
 app.use(cors());
 app.use(express.json());
 
-/* ================= DATA FILES ================= */
+/* ================= FILE SYSTEM ================= */
 const dataDir = path.join(__dirname, "data");
 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir);
 
-const adminFile = path.join(dataDir, "admin.json");
-const tokenFile = path.join(dataDir, "tokens.json");
 const leadsFile = path.join(dataDir, "leads.json");
+const adminFile = path.join(dataDir, "admin.json");
 
-const readJSON = (file, fallback) =>
-  fs.existsSync(file) ? JSON.parse(fs.readFileSync(file)) : fallback;
-
-const writeJSON = (file, data) =>
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+const readJSON = (f, d) => fs.existsSync(f) ? JSON.parse(fs.readFileSync(f)) : d;
+const writeJSON = (f, d) => fs.writeFileSync(f, JSON.stringify(d, null, 2));
 
 if (!fs.existsSync(adminFile)) {
   writeJSON(adminFile, { passcode: "vinesadmin" });
 }
 
-/* ================= FILE UPLOAD ================= */
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }
+/* ================= HEALTH ================= */
+app.get("/", (_, res) => {
+  res.send("✅ Vines LeadSecure Backend Live");
 });
 
-/* ================= GOOGLE SCRIPT URL ================= */
-const GOOGLE_SCRIPT_URL =
-  "https://script.google.com/macros/s/AKfycbwI9HTVsEVX4xNtwIckjHgNZf5Yv1QjZh4045XDvYKiiuozCJCN21sgUZaNgDyQxHym/exec";
-
-/* ================= HEALTH CHECK ================= */
-app.get("/", (req, res) => {
-  res.send("✅ Vines LeadSecure Backend is LIVE");
+/* ================= AUTH ================= */
+app.post("/api/login", (req, res) => {
+  const { passcode } = req.body;
+  const admin = readJSON(adminFile, {});
+  if (passcode !== admin.passcode) {
+    return res.status(401).json({ error: "Invalid passcode" });
+  }
+  res.json({ success: true });
 });
 
 /* ================= LEAD CAPTURE ================= */
 app.post("/api/leads", async (req, res) => {
   try {
     const { fullName, phone, email, source } = req.body;
-
     if (!fullName || !phone) {
-      return res.status(400).json({ error: "Missing required fields" });
+      return res.status(400).json({ error: "Missing fields" });
     }
 
-    const response = await fetch(GOOGLE_SCRIPT_URL, {
+    const lead = {
+      id: Date.now(),
+      fullName,
+      phone,
+      email: email || "",
+      source: source || "Website",
+      date: new Date().toISOString(),
+      status: "pending"
+    };
+
+    const leads = readJSON(leadsFile, []);
+    leads.unshift(lead);
+    writeJSON(leadsFile, leads);
+
+    await fetch("YOUR_GOOGLE_SCRIPT_URL", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        fullName,
-        phone,
-        email: email || "",
-        source: source || "Website"
-      })
+      body: JSON.stringify(lead)
     });
 
-    if (!response.ok) {
-      return res
-        .status(500)
-        .json({ success: false, error: "Google Sheets rejected request" });
-    }
+    res.json({ success: true });
 
-    res.json({ success: true, message: "Lead captured successfully" });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, error: "Lead capture failed" });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Lead capture failed" });
   }
 });
 
-/* ================= GET ALL LEADS (STEP 2) ================= */
-app.get("/api/leads/all", async (req, res) => {
+/* ================= VIEW LEADS ================= */
+app.get("/api/leads/all", (req, res) => {
   try {
-    const response = await fetch(GOOGLE_SCRIPT_URL);
-    const data = await response.json();
-    res.json(data);
-  } catch (err) {
-    console.error(err);
+    let leads = readJSON(leadsFile, []);
+    const filter = req.query.filter || "all";
+    const now = new Date();
+
+    if (filter === "today") {
+      leads = leads.filter(l =>
+        new Date(l.date).toDateString() === now.toDateString()
+      );
+    }
+
+    if (filter === "week") {
+      const start = new Date(now);
+      start.setDate(now.getDate() - now.getDay());
+      leads = leads.filter(l => new Date(l.date) >= start);
+    }
+
+    res.json(leads);
+
+  } catch {
     res.status(500).json({ error: "Failed to load leads" });
   }
 });
 
-/* ================= TOGGLE APPROVAL (STEP 3) ================= */
-app.post("/api/leads/toggle", async (req, res) => {
-  try {
-    const { row } = req.body;
+/* ================= TOGGLE STATUS ================= */
+app.post("/api/leads/toggle", (req, res) => {
+  const { id } = req.body;
+  const leads = readJSON(leadsFile, []);
 
-    await fetch(GOOGLE_SCRIPT_URL, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "toggle", row })
-    });
+  const lead = leads.find(l => l.id === id);
+  if (!lead) return res.status(404).json({ error: "Lead not found" });
 
-    res.json({ success: true });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Toggle failed" });
-  }
+  lead.status = lead.status === "approved" ? "pending" : "approved";
+  writeJSON(leadsFile, leads);
+
+  res.json({ success: true });
 });
 
-/* ================= START SERVER ================= */
+/* ================= EXPORT CSV ================= */
+app.get("/api/leads/csv", (_, res) => {
+  const leads = readJSON(leadsFile, []);
+  let csv = "Date,Name,Phone,Email,Source,Status\n";
+
+  leads.forEach(l => {
+    csv += `${l.date},${l.fullName},${l.phone},${l.email},${l.source},${l.status}\n`;
+  });
+
+  res.header("Content-Type", "text/csv");
+  res.attachment("leads.csv");
+  res.send(csv);
+});
+
+/* ================= START ================= */
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+app.listen(PORT, () =>
+  console.log(`🚀 Backend running on ${PORT}`)
+);
